@@ -1,36 +1,81 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
 const http = require('http');
 
 const port = process.env.PORT || 3000;
+http.createServer((req, res) => { res.writeHead(200); res.end('Bot aktif!'); }).listen(port);
 
-const server = http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end('Bot aktif!');
-});
-
-server.listen(port);
+// 3 Farklı Yetkili Rol ID'sini buraya yapıştır:
+const YETKILI_ROLLER = ['1483795032547917972', '1483795032589992075', '1483795032719884332'];
 
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-client.on('ready', () => {
-    console.log(`${client.user.tag} olarak giriş yapıldı ve bot şu an aktif!`);
-});
+let ticketCount = 0;
 
 client.on('messageCreate', (message) => {
-    if (message.author.bot) return;
-
     if (message.content === '!panel') {
-        message.channel.send('Bilet paneli başarıyla oluşturuldu!');
+        const embed = new EmbedBuilder()
+            .setTitle('MEM | Ticket Sistemi')
+            .setDescription('MEM Ticket sistemine hoş geldiniz, aşağıdaki kategori seç menüsünü kullanarak yaşadığınız sorunun kategorisine basıp bilet oluşturabilirsiniz.')
+            .setColor('Blue');
+
+        const row = new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId('ticket_menu')
+                .setPlaceholder('Kategori seç...')
+                .addOptions([
+                    { label: 'Oyun içi destek', value: 'Oyun içi destek', description: 'MEM Roblox oyununda yaşanan sorunlar ve olaylar için bu talep.' },
+                    { label: 'Discord içi destek', value: 'Discord içi destek', description: 'MEM Discord sunucusunda yaşanan sorunlar ve olaylar için bu talep.' },
+                    { label: 'Yetkililerle iletişim', value: 'Yetkililerle iletişim', description: 'Yetkililer ile konuşmak veya bir konuda destek almak için bu talep.' }
+                ])
+        );
+        message.channel.send({ embeds: [embed], components: [row] });
+    }
+});
+
+client.on('interactionCreate', async (interaction) => {
+    if (interaction.isStringSelectMenu()) {
+        ticketCount++;
+        const category = interaction.values[0];
+        
+        let permissionList = [
+            { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+            { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }
+        ];
+        
+        YETKILI_ROLLER.forEach(roleId => {
+            permissionList.push({ id: roleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+        });
+
+        const channel = await interaction.guild.channels.create({
+            name: `ticket-${ticketCount}`,
+            permissionOverwrites: permissionList
+        });
+
+        const embed = new EmbedBuilder()
+            .setTitle('MEM | Ticket Botu')
+            .setDescription(`Biletinizi oluşturdunuz, lütfen sorununuzu yazınız, yetkililer en kısa sürede ilgilenecektir.\n\n**Kullanıcı:** ${interaction.user.tag}\n**Kategori:** ${category}\n**Toplam Bilet:** ${ticketCount}`)
+            .setColor('Green');
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('close_ticket').setLabel('Kapat').setStyle(ButtonStyle.Danger)
+        );
+
+        const yetkiliMention = YETKILI_ROLLER.map(id => `<@&${id}>`).join(' ');
+        
+        await channel.send({ content: `${interaction.user} ${yetkiliMention}`, embeds: [embed], components: [row] });
+        await interaction.reply({ content: `Biletiniz açıldı: ${channel}`, ephemeral: true });
+    }
+
+    if (interaction.isButton() && interaction.customId === 'close_ticket') {
+        await interaction.reply('Bilet 3 saniye içinde kapatılıyor...');
+        setTimeout(() => interaction.channel.delete(), 3000);
     }
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
 
 
 
