@@ -1,11 +1,14 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const http = require('http');
 
+const port = process.env.PORT || 3000;
+
 const server = http.createServer((req, res) => {
     res.writeHead(200);
     res.end('Bot aktif!');
 });
-server.listen(3000);
+
+server.listen(port);
 
 const client = new Client({
     intents: [
@@ -28,5 +31,6 @@ client.on('messageCreate', (message) => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
 
 
