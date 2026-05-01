@@ -1,11 +1,11 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
 const http = require('http');
 
 const port = process.env.PORT || 3000;
 http.createServer((req, res) => { res.writeHead(200); res.end('Bot aktif!'); }).listen(port);
 
-// 3 Farklı Yetkili Rol ID'sini buraya yapıştır:
 const YETKILI_ROLLER = ['1483795032547917972', '1483795032589992075', '1483795032719884332'];
+const LOG_KANAL_ID = '1497733592069967882'; // Transcriptlerin düşeceği kanal
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
@@ -55,7 +55,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const embed = new EmbedBuilder()
             .setTitle('MEM | Ticket Botu')
-            .setDescription(`Biletinizi oluşturdunuz, lütfen sorununuzu yazınız, yetkililer en kısa sürede ilgilenecektir.\n\n**Kullanıcı:** ${interaction.user.tag}\n**Kategori:** ${category}\n**Toplam Bilet:** ${ticketCount}`)
+            .setDescription(`Biletinizi oluşturdunuz, lütfen sorununuzu yazınız, yetkililer en kısa sürede ilgilenecektir.\n\n**Kullanıcı:** ${interaction.user.tag} (${interaction.user.id})\n**Kategori:** ${category}\n**Toplam Bilet:** ${ticketCount}`)
             .setColor('Green');
 
         const row = new ActionRowBuilder().addComponents(
@@ -69,13 +69,30 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId === 'close_ticket') {
-        await interaction.reply('Bilet 3 saniye içinde kapatılıyor...');
-        setTimeout(() => interaction.channel.delete(), 3000);
+        await interaction.reply('🚀 **Bilet arşive alınıyor ve 5 saniye içinde kapatılıyor...**');
+
+        // Transcript Oluşturma İşlemi
+        const logChannel = interaction.guild.channels.cache.get(LOG_KANAL_ID);
+        if (logChannel) {
+            const messages = await interaction.channel.messages.fetch({ limit: 100 });
+            let transcript = `TICKET TRANSCRIPT\nSunucu: ${interaction.guild.name}\nKanal: ${interaction.channel.name}\nKapatan: ${interaction.user.tag}\n--------------------------------------\n\n`;
+
+            // Mesajları tarihe göre sıralayıp metne döküyoruz
+            const logContent = messages.reverse().map(m => `[${m.createdAt.toLocaleString('tr-TR')}] ${m.author.tag}: ${m.content}`).join('\n');
+            transcript += logContent;
+
+            const buffer = Buffer.from(transcript, 'utf-8');
+            const attachment = new AttachmentBuilder(buffer, { name: `${interaction.channel.name}-transcript.txt` });
+
+            // Logs kanalına gönderilecek mesaj
+            await logChannel.send({
+                content: `📁 **${interaction.user.tag}** Adlı kişinin ticket transcripti.`,
+                files: [attachment]
+            });
+        }
+
+        setTimeout(() => interaction.channel.delete(), 5000);
     }
 });
 
 client.login(process.env.DISCORD_TOKEN);
-
-
-
-
