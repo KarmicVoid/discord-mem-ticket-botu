@@ -1,100 +1,81 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, AttachmentBuilder, MessageFlags } = require('discord.js');
-const http = require('http');
+const fs = require('fs');
+const express = require('express'); // Express eklendi
 
+// --- RENDER PORT HATASI ÇÖZÜMÜ ---
+const app = express();
 const port = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('Bot aktif!'); }).listen(port);
-
-const YETKILI_ROLLER = ['1483795032547917972', '1483795032589992075', '1483795032719884332'];
-const LOG_KANAL_ID = '1497733592069967882';
+app.get('/', (req, res) => res.send('MEM Ticket Botu Aktif!'));
+app.listen(port, () => console.log(`Port ${port} dinleniyor.`));
 
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds, 
-        GatewayIntentBits.GuildMessages, 
-        GatewayIntentBits.MessageContent
-    ]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-let ticketCount = 0;
+let sunucuVerisi = {};
+if (fs.existsSync('./ayarlar.json')) {
+    sunucuVerisi = JSON.parse(fs.readFileSync('./ayarlar.json', 'utf8'));
+}
+
+function veriKaydet() {
+    fs.writeFileSync('./ayarlar.json', JSON.stringify(sunucuVerisi, null, 2));
+}
 
 client.on('messageCreate', async (message) => {
-    if (message.content === '!panel') {
-        const embed = new EmbedBuilder()
-            .setTitle('MEM | Ticket Sistemi')
-            .setDescription('Aşağıdaki menüyü kullanarak destek talebi açabilirsiniz.')
-            .setColor('Blue');
+    if (!message.guild || message.author.bot) return;
 
-        const row = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-                .setCustomId('ticket_menu')
-                .setPlaceholder('Kategori seç...')
-                .addOptions([
-                    { label: 'Oyun içi destek', value: 'Oyun içi destek' },
-                    { label: 'Discord içi destek', value: 'Discord içi destek' },
-                    { label: 'Yetkililerle iletişim', value: 'Yetkililerle iletişim' }
-                ])
-        );
-        await message.channel.send({ embeds: [embed], components: [row] });
-    }
-});
+    if (message.content === '/setup') {
+        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
 
-client.on('interactionCreate', async (interaction) => {
-    if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_menu') {
-        ticketCount++;
-        const category = interaction.values[0];
-        
-        const channel = await interaction.guild.channels.create({
-            name: `ticket-${ticketCount}`,
-            permissionOverwrites: [
-                { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
-                { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
-                ...YETKILI_ROLLER.map(roleId => ({ id: roleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }))
-            ]
-        });
-
-        const embed = new EmbedBuilder()
-            .setTitle('MEM | Ticket Açıldı')
-            .setDescription(`**Kullanıcı:** ${interaction.user.tag}\n**Kategori:** ${category}`)
-            .setColor('Green');
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('close_ticket').setLabel('Bileti Kapat').setStyle(ButtonStyle.Danger)
-        );
-
-        const yetkiliMention = YETKILI_ROLLER.map(id => `<@&${id}>`).join(' ');
-        await channel.send({ content: `${interaction.user} ${yetkiliMention}`, embeds: [embed], components: [row] });
-        await interaction.reply({ content: `Biletiniz açıldı: ${channel}`, flags: MessageFlags.Ephemeral });
-    }
-
-    if (interaction.isButton() && interaction.customId === 'close_ticket') {
-        await interaction.reply({ content: '🚀 **Transcript hazırlanıyor ve kanal siliniyor...**' });
+        const filter = m => m.author.id === message.author.id;
+        let kurulumData = { ticketCount: 0 };
 
         try {
-            const logChannel = await interaction.guild.channels.fetch(LOG_KANAL_ID);
-            if (logChannel) {
-                const messages = await interaction.channel.messages.fetch({ limit: 100 });
-                let transcriptText = `--- TICKET TRANSCRIPT ---\nKanal: ${interaction.channel.name}\nSahibi: ${interaction.user.tag}\n\n`;
-                
-                const logData = Array.from(messages.values())
-                    .reverse()
-                    .map(m => `[${m.createdAt.toLocaleString('tr-TR')}] ${m.author.tag}: ${m.content}`)
-                    .join('\n');
-                
-                transcriptText += logData;
+            await message.channel.send('1️⃣ **Hangi kanala ticket sistemi kurulacak?** (#etiketle)');
+            const cevap1 = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
+            const panelKanal = cevap1.first().mentions.channels.first();
+            if (!panelKanal) return message.reply('❌ Kanal etiketlenmedi.');
+            kurulumData.panelID = panelKanal.id;
 
-                const attachment = new AttachmentBuilder(Buffer.from(transcriptText, 'utf-8'), { name: `transcript-${interaction.channel.name}.txt` });
+            await message.channel.send('2️⃣ **Ticket yetkilisi rolleri hangileri?** (@etiketle)');
+            const cevap2 = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
+            const yetkiliRoller = cevap2.first().mentions.roles.map(r => r.id);
+            if (yetkiliRoller.length === 0) return message.reply('❌ Rol etiketlenmedi.');
+            kurulumData.roller = yetkiliRoller;
 
-                await logChannel.send({
-                    content: `📁 **${interaction.user.tag}** adlı kişinin ticket transcripti.`,
-                    files: [attachment]
-                });
-            }
-        } catch (e) {
-            console.error(e);
-        }
+            await message.channel.send('3️⃣ **Hangi kanala ticket kayıtları düşecek?** (#etiketle)');
+            const cevap3 = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
+            const logKanal = cevap3.first().mentions.channels.first();
+            if (!logKanal) return message.reply('❌ Kanal etiketlenmedi.');
+            kurulumData.logID = logKanal.id;
 
-        setTimeout(() => interaction.channel.delete().catch(() => {}), 5000);
+            sunucuVerisi[message.guild.id] = kurulumData;
+            veriKaydet();
+
+            const embed = new EmbedBuilder()
+                .setTitle('MEM | Ticket Botu')
+                .setDescription('Aşagıdaki kategori seç düğmesine basıp sorununuzu yaşadığınız kategoriyi seçerek bilet oluşturabilirsiniz, gereksiz yere bilet oluşturmak ve 3\'ten fazla yetkili taglamak yasaktır.')
+                .setColor('Red');
+
+            const row = new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('ticket_menu')
+                    .setPlaceholder('Kategori seçiniz...')
+                    .addOptions([
+                        { label: 'Şikayet / Geri Bildirim', value: 'Şikayet/Geri Bildirim', emoji: '📝' },
+                        { label: 'Öneri / İstek', value: 'Öneri/İstek', emoji: '💡' },
+                        { label: 'Partnerlik', value: 'Partnerlik', emoji: '🤝' },
+                        { label: 'Yetkililerle İletişim', value: 'Yetkililerle İletişim', emoji: '👑' }
+                    ])
+            );
+
+            await panelKanal.send({ embeds: [embed], components: [row] });
+            await message.channel.send('✅ Kurulum başarıyla bitti.');
+        } catch (err) { message.channel.send('⚠️ Süre doldu.'); }
     }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// ... (Kanal açma ve kapatma interaction bölümleri moderasyon botundaki gibi buraya eklenecek)
+// Not: Interaction kodları önceki mesajımızdakiyle aynıdır, sadece en alt satıra dikkat:
+
+client.login(process.env.TOKEN); // TOKEN GİZLENDİ
